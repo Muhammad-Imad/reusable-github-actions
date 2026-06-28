@@ -1,0 +1,64 @@
+name: iac-ci
+
+# Reusable workflow: validate and security-scan Terraform / IaC.
+# fmt -> validate -> tflint -> tfsec (security gate + SARIF).
+on:
+  workflow_call:
+    inputs:
+      working-directory:
+        description: "Directory containing the Terraform code"
+        required: false
+        default: "."
+        type: string
+      terraform-version:
+        required: false
+        default: "1.9.5"
+        type: string
+      tfsec-soft-fail:
+        description: "Report tfsec findings without failing the build"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  security-events: write   # required to upload tfsec SARIF
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ inputs.terraform-version }}
+
+      - name: Terraform fmt
+        run: terraform fmt -check -recursive
+
+      - name: Terraform init (no backend)
+        run: terraform init -backend=false
+
+      - name: Terraform validate
+        run: terraform validate
+
+      - name: TFLint
+        uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: latest
+      - run: tflint --init && tflint
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: tfsec IaC security scan
+        uses: ./.github/actions/tfsec-iac-scan
+        with:
+          working-directory: ${{ inputs.working-directory }}
+          soft-fail: ${{ inputs.tfsec-soft-fail }}

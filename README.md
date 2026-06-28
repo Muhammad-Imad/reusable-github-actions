@@ -14,20 +14,30 @@
 
 ```mermaid
 flowchart LR
-    push([Push to main]) --> ci["node-ci.yml<br/><i>lint · test · build</i>"]
+    push([Push / PR]) --> ci["node-ci.yml<br/><i>lint · test · build</i>"]
+    push --> iac["iac-ci.yml<br/><i>fmt · validate · tflint</i>"]
+
+    iac --> sec1["🛡️ tfsec-iac-scan<br/><i>IaC security gate + SARIF</i>"]:::sec
     ci --> build["docker-build-push.yml"]
+
     subgraph build_steps["build / scan / push (composite actions)"]
         direction TB
         a1["prepare-docker-args<br/><i>tags · labels · cache</i>"] --> a2["docker buildx build"]
-        a2 --> a3["trivy-image-scan<br/><i>HIGH/CRITICAL gate + SARIF</i>"]
-        a3 --> a4["push to GHCR"]
+        a2 --> sec2["🛡️ trivy-image-scan<br/><i>HIGH/CRITICAL gate + SARIF</i>"]:::sec
+        sec2 --> a4["push to GHCR"]
     end
     build --> build_steps
+
+    sec1 --> deploy
     build_steps --> deploy["deploy-gitops.yml"]
     deploy --> a5["gitops-update-configs<br/><i>bump image tag → PR</i>"]
     a5 --> argo["Argo CD / Flux<br/>syncs to cluster"]
     argo -. "incident" .-> rb["rollback-service<br/><i>revert to previous tag</i>"]
+
+    classDef sec fill:#7B1FA2,stroke:#fff,stroke-width:1px,color:#fff;
 ```
+
+> 🛡️ **Two security gates, both fail-the-build and upload SARIF to code scanning:** `tfsec` scans the **IaC** before it ships, and `Trivy` scans the **image** before it is pushed.
 
 ---
 
@@ -35,7 +45,7 @@ flowchart LR
 
 - **Reusable workflows** (`workflow_call`) — consume with `uses: acme/reusable-github-actions/.github/workflows/<file>@v1`.
 - **Composite actions** — small, single-purpose, independently testable building blocks.
-- **Security-gated builds** — Trivy scans every image; the push only happens **after** the scan passes, and results upload to GitHub code scanning (SARIF).
+- **Security-gated, shift-left** — **tfsec** scans IaC and **Trivy** scans every image; the push/merge only happens **after** the scan passes, and both upload results to GitHub code scanning (SARIF).
 - **Pull-based CD** — deploys by bumping image tags in a GitOps repo and opening a PR; Argo CD / Flux does the actual rollout.
 - **Fast, reversible** — immutable `sha-` tags, GHA build cache, and a one-shot **rollback** action that reverts to the previous tag.
 - **DRY at org scale** — one change here propagates to every consuming repo (pin to `@v1` and move the tag for controlled rollouts).
@@ -49,11 +59,13 @@ flowchart LR
 ├── workflows/                     # reusable workflows (workflow_call)
 │   ├── docker-build-push.yml      # build → trivy scan gate → push to GHCR
 │   ├── node-ci.yml                # lint · test · build (Node.js / Next.js)
+│   ├── iac-ci.yml                 # terraform fmt/validate/tflint → tfsec gate
 │   ├── deploy-gitops.yml          # bump GitOps config + open PR (approval-gated)
 │   └── ci.yml                     # self-test: actionlint + yamllint
 └── actions/                       # composite actions (reusable steps)
     ├── prepare-docker-args/       # tags, OCI labels, cache args
-    ├── trivy-image-scan/          # image scan + SARIF upload + fail gate
+    ├── trivy-image-scan/          # image CVE scan + SARIF upload + fail gate
+    ├── tfsec-iac-scan/            # Terraform/IaC security scan + SARIF + gate
     ├── gitops-update-configs/     # yq bump image tag → PR
     └── rollback-service/          # revert to previous image tag
 examples/
@@ -93,7 +105,7 @@ See [`examples/caller-workflow.yml`](examples/caller-workflow.yml) for the full 
 
 - Least-privilege `permissions:` per workflow (e.g. `packages: write` + `security-events: write` only where needed).
 - Secrets passed explicitly via `secrets:` inputs — never hard-coded. GitOps writes use a scoped **GitHub App token**, not a personal PAT.
-- Trivy gate blocks images with fixable HIGH/CRITICAL CVEs from ever being pushed.
+- **tfsec** gate blocks insecure Terraform/IaC from merging; **Trivy** gate blocks images with fixable HIGH/CRITICAL CVEs from ever being pushed.
 - Third-party actions are version-pinned.
 
 ## 🧭 Engineering Case Study

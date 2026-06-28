@@ -1,0 +1,38 @@
+name: "TFSec IaC Scan"
+description: "Static security scan of Terraform / IaC with tfsec; uploads SARIF and gates on findings (composite action)."
+
+inputs:
+  working-directory:
+    description: "Directory containing the Terraform code to scan"
+    required: false
+    default: "."
+  soft-fail:
+    description: "If 'true', report findings but do not fail the build"
+    required: false
+    default: "false"
+  upload-sarif:
+    description: "Upload results to GitHub code scanning"
+    required: false
+    default: "true"
+
+runs:
+  using: "composite"
+  steps:
+    - name: tfsec (SARIF report)
+      uses: aquasecurity/tfsec-sarif-action@v0.1.4
+      with:
+        working_directory: ${{ inputs.working-directory }}
+        sarif_file: tfsec-results.sarif
+
+    - name: Upload SARIF to code scanning
+      if: ${{ inputs.upload-sarif == 'true' }}
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: tfsec-results.sarif
+
+    - name: tfsec (gate)
+      if: ${{ inputs.soft-fail != 'true' }}
+      uses: aquasecurity/tfsec-action@v1.0.3
+      with:
+        working_directory: ${{ inputs.working-directory }}
+        soft_fail: false
