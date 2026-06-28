@@ -1,0 +1,54 @@
+name: "GitOps Update Configs"
+description: "Bumps an image tag in a GitOps config repo and opens a PR (composite action). Enables pull-based CD via Argo CD/Flux."
+
+inputs:
+  gitops-repo:
+    description: "owner/repo of the GitOps config repository"
+    required: true
+  service:
+    description: "Service/app name whose image tag is being updated"
+    required: true
+  environment:
+    description: "Target environment (dev|staging|prod)"
+    required: true
+  image-tag:
+    description: "New image tag to roll out"
+    required: true
+  token:
+    description: "Token with write access to the GitOps repo (use a GitHub App token, not a PAT)"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Checkout GitOps repo
+      uses: actions/checkout@v4
+      with:
+        repository: ${{ inputs.gitops-repo }}
+        token: ${{ inputs.token }}
+        path: gitops
+
+    - name: Bump image tag with yq
+      shell: bash
+      working-directory: gitops
+      run: |
+        set -euo pipefail
+        FILE="apps/${{ inputs.environment }}/${{ inputs.service }}/values.yaml"
+        echo "Updating image.tag -> ${{ inputs.image-tag }} in $FILE"
+        yq -i '.image.tag = "${{ inputs.image-tag }}"' "$FILE"
+        git diff --stat
+
+    - name: Open pull request
+      uses: peter-evans/create-pull-request@v6
+      with:
+        token: ${{ inputs.token }}
+        path: gitops
+        commit-message: "chore(${{ inputs.environment }}): ${{ inputs.service }} -> ${{ inputs.image-tag }}"
+        branch: "deploy/${{ inputs.service }}-${{ inputs.environment }}"
+        title: "Deploy ${{ inputs.service }} to ${{ inputs.environment }} (${{ inputs.image-tag }})"
+        body: |
+          Automated image bump from CI.
+          - **Service:** ${{ inputs.service }}
+          - **Environment:** ${{ inputs.environment }}
+          - **Image tag:** `${{ inputs.image-tag }}`
+        delete-branch: true

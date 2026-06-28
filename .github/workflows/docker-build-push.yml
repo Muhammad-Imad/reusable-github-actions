@@ -1,0 +1,100 @@
+name: docker-build-push
+
+# Reusable workflow: build a container image, scan it with Trivy, and push to GHCR.
+# Consume from another repo with:
+#   jobs:
+#     image:
+#       uses: acme/reusable-github-actions/.github/workflows/docker-build-push.yml@v1
+on:
+  workflow_call:
+    inputs:
+      image-name:
+        description: "Image repo path, e.g. acme/checkout-svc"
+        required: true
+        type: string
+      dockerfile:
+        description: "Path to the Dockerfile"
+        required: false
+        default: "Dockerfile"
+        type: string
+      context:
+        description: "Docker build context"
+        required: false
+        default: "."
+        type: string
+      push:
+        description: "Push the image after a successful scan"
+        required: false
+        default: true
+        type: boolean
+      registry:
+        required: false
+        default: "ghcr.io"
+        type: string
+    outputs:
+      image:
+        description: "Primary (immutable) image reference that was built"
+        value: ${{ jobs.build.outputs.image }}
+
+permissions:
+  contents: read
+  packages: write
+  security-events: write   # required to upload Trivy SARIF
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.ref.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare build args
+        id: args
+        uses: ./.github/actions/prepare-docker-args
+        with:
+          registry: ${{ inputs.registry }}
+          image-name: ${{ inputs.image-name }}
+          push: ${{ inputs.push }}
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to registry
+        if: ${{ inputs.push }}
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ inputs.registry }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build (load locally for scanning)
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ inputs.context }}
+          file: ${{ inputs.dockerfile }}
+          load: true
+          tags: ${{ steps.args.outputs.tags }}
+          labels: ${{ steps.args.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Primary image ref
+        id: ref
+        run: echo "image=${{ inputs.registry }}/${{ inputs.image-name }}:${{ steps.args.outputs.primary-tag }}" >> "$GITHUB_OUTPUT"
+
+      - name: Trivy scan (gate)
+        uses: ./.github/actions/trivy-image-scan
+        with:
+          image-ref: ${{ steps.ref.outputs.image }}
+
+      - name: Push (only after scan passes)
+        if: ${{ inputs.push }}
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ inputs.context }}
+          file: ${{ inputs.dockerfile }}
+          push: true
+          tags: ${{ steps.args.outputs.tags }}
+          labels: ${{ steps.args.outputs.labels }}
+          cache-from: type=gha

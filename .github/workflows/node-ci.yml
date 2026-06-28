@@ -1,0 +1,65 @@
+name: node-ci
+
+# Reusable workflow: lint, test and build a Node.js / Next.js app with caching.
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        required: false
+        default: "20"
+        type: string
+      working-directory:
+        required: false
+        default: "."
+        type: string
+      build-command:
+        required: false
+        default: "npm run build"
+        type: string
+      upload-artifact:
+        description: "Upload the build output as an artifact"
+        required: false
+        default: false
+        type: boolean
+      artifact-path:
+        required: false
+        default: ".next"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: "npm"
+          cache-dependency-path: ${{ inputs.working-directory }}/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint --if-present
+
+      - name: Test
+        run: npm test --if-present
+
+      - name: Build
+        run: ${{ inputs.build-command }}
+
+      - name: Upload build artifact
+        if: ${{ inputs.upload-artifact }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ github.sha }}
+          path: ${{ inputs.working-directory }}/${{ inputs.artifact-path }}
+          retention-days: 7

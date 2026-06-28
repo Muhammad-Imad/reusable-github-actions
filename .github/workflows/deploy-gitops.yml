@@ -1,0 +1,42 @@
+name: deploy-gitops
+
+# Reusable workflow: roll out a new image tag by bumping the GitOps config repo.
+# Pull-based CD — Argo CD / Flux then syncs the change to the cluster.
+on:
+  workflow_call:
+    inputs:
+      service:
+        required: true
+        type: string
+      environment:
+        required: true
+        type: string
+      image-tag:
+        required: true
+        type: string
+      gitops-repo:
+        required: true
+        type: string
+    secrets:
+      gitops-token:
+        description: "GitHub App token with write access to the GitOps repo"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}   # attach approval/protection rules here
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Update GitOps configs
+        uses: ./.github/actions/gitops-update-configs
+        with:
+          gitops-repo: ${{ inputs.gitops-repo }}
+          service: ${{ inputs.service }}
+          environment: ${{ inputs.environment }}
+          image-tag: ${{ inputs.image-tag }}
+          token: ${{ secrets.gitops-token }}

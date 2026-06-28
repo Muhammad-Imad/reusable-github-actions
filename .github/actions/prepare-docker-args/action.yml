@@ -1,0 +1,49 @@
+name: "Prepare Docker Build Args"
+description: "Computes image tags, OCI labels and cache args for a Docker build (composite action)."
+
+inputs:
+  registry:
+    description: "Container registry host, e.g. ghcr.io"
+    required: false
+    default: "ghcr.io"
+  image-name:
+    description: "Repository path of the image, e.g. acme/checkout-svc"
+    required: true
+  push:
+    description: "Whether the image will be pushed (controls cache scope)"
+    required: false
+    default: "true"
+
+outputs:
+  tags:
+    description: "Newline-separated list of fully-qualified image tags"
+    value: ${{ steps.meta.outputs.tags }}
+  labels:
+    description: "OCI labels to apply to the image"
+    value: ${{ steps.meta.outputs.labels }}
+  primary-tag:
+    description: "The immutable git-sha tag"
+    value: ${{ steps.sha.outputs.tag }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Short SHA tag
+      id: sha
+      shell: bash
+      run: echo "tag=sha-${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+
+    - name: Derive metadata (tags + labels)
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ inputs.registry }}/${{ inputs.image-name }}
+        # Immutable sha tag + a moving branch/PR tag + semver on git tags.
+        tags: |
+          type=sha,prefix=sha-,format=long
+          type=ref,event=branch
+          type=ref,event=pr
+          type=semver,pattern={{version}}
+        labels: |
+          org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          org.opencontainers.image.revision=${{ github.sha }}

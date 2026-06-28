@@ -1,0 +1,55 @@
+name: "Rollback Service"
+description: "Rolls a service back to its previous image tag in the GitOps repo (composite action)."
+
+inputs:
+  gitops-repo:
+    description: "owner/repo of the GitOps config repository"
+    required: true
+  service:
+    description: "Service/app name to roll back"
+    required: true
+  environment:
+    description: "Target environment (dev|staging|prod)"
+    required: true
+  token:
+    description: "Token with write access to the GitOps repo"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Checkout GitOps repo
+      uses: actions/checkout@v4
+      with:
+        repository: ${{ inputs.gitops-repo }}
+        token: ${{ inputs.token }}
+        path: gitops
+        fetch-depth: 0
+
+    - name: Resolve previous tag from history
+      id: prev
+      shell: bash
+      working-directory: gitops
+      run: |
+        set -euo pipefail
+        FILE="apps/${{ inputs.environment }}/${{ inputs.service }}/values.yaml"
+        # Last two distinct image.tag values committed to this file.
+        PREV=$(git log -p -- "$FILE" \
+                | grep -E '^\+.*image\.tag|^\+\s*tag:' \
+                | sed -E 's/.*tag:\s*"?([^"]+)"?.*/\1/' \
+                | awk '!seen[$0]++' | sed -n '2p')
+        if [ -z "$PREV" ]; then echo "No previous tag found"; exit 1; fi
+        echo "Rolling back to: $PREV"
+        echo "tag=$PREV" >> "$GITHUB_OUTPUT"
+
+    - name: Apply rollback
+      shell: bash
+      working-directory: gitops
+      run: |
+        set -euo pipefail
+        FILE="apps/${{ inputs.environment }}/${{ inputs.service }}/values.yaml"
+        yq -i '.image.tag = "${{ steps.prev.outputs.tag }}"' "$FILE"
+        git config user.name "ci-bot"
+        git config user.email "ci-bot@users.noreply.github.com"
+        git commit -am "revert(${{ inputs.environment }}): rollback ${{ inputs.service }} -> ${{ steps.prev.outputs.tag }}"
+        git push

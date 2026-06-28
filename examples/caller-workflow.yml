@@ -1,0 +1,33 @@
+# EXAMPLE — drop this into a downstream application repo (.github/workflows/release.yml).
+# It consumes the reusable workflows published by this repository to get a full
+# CI -> build/scan/push -> GitOps deploy pipeline with almost no boilerplate.
+name: release
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  ci:
+    uses: acme/reusable-github-actions/.github/workflows/node-ci.yml@v1
+    with:
+      node-version: "20"
+
+  image:
+    needs: ci
+    uses: acme/reusable-github-actions/.github/workflows/docker-build-push.yml@v1
+    with:
+      image-name: acme/checkout-svc
+      dockerfile: Dockerfile
+      push: true
+
+  deploy-staging:
+    needs: image
+    uses: acme/reusable-github-actions/.github/workflows/deploy-gitops.yml@v1
+    with:
+      service: checkout-svc
+      environment: staging
+      image-tag: ${{ needs.image.outputs.image }}
+      gitops-repo: acme/gitops-config
+    secrets:
+      gitops-token: ${{ secrets.GITOPS_APP_TOKEN }}

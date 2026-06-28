@@ -1,0 +1,47 @@
+name: "Trivy Image Scan"
+description: "Scans a container image with Trivy and fails the build on HIGH/CRITICAL vulnerabilities (composite action)."
+
+inputs:
+  image-ref:
+    description: "Fully-qualified image reference to scan, e.g. ghcr.io/acme/checkout-svc:sha-abc123"
+    required: true
+  severity:
+    description: "Comma-separated severities that fail the build"
+    required: false
+    default: "HIGH,CRITICAL"
+  ignore-unfixed:
+    description: "Ignore vulnerabilities that have no fix yet"
+    required: false
+    default: "true"
+  upload-sarif:
+    description: "Upload results to GitHub code scanning"
+    required: false
+    default: "true"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Trivy scan (SARIF report)
+      uses: aquasecurity/trivy-action@0.24.0
+      with:
+        image-ref: ${{ inputs.image-ref }}
+        format: "sarif"
+        output: "trivy-results.sarif"
+        ignore-unfixed: ${{ inputs.ignore-unfixed }}
+        vuln-type: "os,library"
+        severity: ${{ inputs.severity }}
+
+    - name: Upload SARIF to code scanning
+      if: ${{ inputs.upload-sarif == 'true' }}
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: "trivy-results.sarif"
+
+    - name: Fail on findings (gate)
+      uses: aquasecurity/trivy-action@0.24.0
+      with:
+        image-ref: ${{ inputs.image-ref }}
+        format: "table"
+        exit-code: "1"
+        ignore-unfixed: ${{ inputs.ignore-unfixed }}
+        severity: ${{ inputs.severity }}
