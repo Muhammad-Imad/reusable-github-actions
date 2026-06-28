@@ -14,28 +14,40 @@
 
 ```mermaid
 flowchart LR
-    push([Push / PR]) --> ci["node-ci.yml<br/><i>lint · test · build</i>"]
-    push --> iac["iac-ci.yml<br/><i>fmt · validate · tflint</i>"]
+    push(["Push / PR"])
+    ci["node-ci.yml<br/>lint · test · build"]
+    iac["iac-ci.yml<br/>fmt · validate · tflint"]
+    sec1["tfsec-iac-scan<br/>IaC security gate + SARIF"]
+    build["docker-build-push.yml"]
+    deploy["deploy-gitops.yml"]
+    a5["gitops-update-configs<br/>bump image tag to PR"]
+    argo["Argo CD / Flux<br/>syncs to cluster"]
+    rb["rollback-service<br/>revert to previous tag"]
 
-    iac --> sec1["🛡️ tfsec-iac-scan<br/><i>IaC security gate + SARIF</i>"]:::sec
-    ci --> build["docker-build-push.yml"]
+    push --> ci
+    push --> iac
+    iac --> sec1
 
-    subgraph build_steps["build / scan / push (composite actions)"]
+    ci --> build
+    subgraph build_steps["build / scan / push"]
         direction TB
-        a1["prepare-docker-args<br/><i>tags · labels · cache</i>"] --> a2["docker buildx build"]
-        a2 --> sec2["🛡️ trivy-image-scan<br/><i>HIGH/CRITICAL gate + SARIF</i>"]:::sec
+        a1["prepare-docker-args"] --> a2["docker buildx build"]
+        a2 --> sec2["trivy-image-scan<br/>HIGH/CRITICAL gate + SARIF"]
         sec2 --> a4["push to GHCR"]
     end
     build --> build_steps
 
     sec1 --> deploy
-    build_steps --> deploy["deploy-gitops.yml"]
-    deploy --> a5["gitops-update-configs<br/><i>bump image tag → PR</i>"]
-    a5 --> argo["Argo CD / Flux<br/>syncs to cluster"]
-    argo -. "incident" .-> rb["rollback-service<br/><i>revert to previous tag</i>"]
+    build_steps --> deploy
+    deploy --> a5
+    a5 --> argo
+    argo -. incident .-> rb
 
-    classDef sec fill:#7B1FA2,stroke:#fff,stroke-width:1px,color:#fff;
+    classDef sec fill:#7B1FA2,stroke:#ffffff,color:#ffffff;
+    class sec1,sec2 sec
 ```
+
+🛡️ = security gate. **`tfsec`** scans the IaC and **`Trivy`** scans the image — both fail the build and upload SARIF to code scanning.
 
 > 🛡️ **Two security gates, both fail-the-build and upload SARIF to code scanning:** `tfsec` scans the **IaC** before it ships, and `Trivy` scans the **image** before it is pushed.
 
