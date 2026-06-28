@@ -15,39 +15,33 @@
 ```mermaid
 flowchart LR
     push(["Push / PR"])
-    ci["node-ci.yml<br/>lint · test · build"]
-    iac["iac-ci.yml<br/>fmt · validate · tflint"]
-    sec1["tfsec-iac-scan<br/>IaC security gate + SARIF"]
+    ci["node-ci.yml<br/>lint, test, build"]
+    iac["iac-ci.yml<br/>fmt, validate, tflint"]
+    sec1["tfsec-iac-scan<br/>IaC security gate + SARIF"]:::sec
     build["docker-build-push.yml"]
     deploy["deploy-gitops.yml"]
-    a5["gitops-update-configs<br/>bump image tag to PR"]
+    a5["gitops-update-configs<br/>bump image tag, open PR"]
     argo["Argo CD / Flux<br/>syncs to cluster"]
     rb["rollback-service<br/>revert to previous tag"]
 
-    push --> ci
-    push --> iac
-    iac --> sec1
-
-    ci --> build
     subgraph build_steps["build / scan / push"]
         direction TB
-        a1["prepare-docker-args"] --> a2["docker buildx build"]
-        a2 --> sec2["trivy-image-scan<br/>HIGH/CRITICAL gate + SARIF"]
-        sec2 --> a4["push to GHCR"]
+        a1["prepare-docker-args"]
+        a2["docker buildx build"]
+        sec2["trivy-image-scan<br/>HIGH/CRITICAL gate + SARIF"]:::sec
+        a4["push to GHCR"]
+        a1 --> a2 --> sec2 --> a4
     end
-    build --> build_steps
 
-    sec1 --> deploy
-    build_steps --> deploy
-    deploy --> a5
-    a5 --> argo
-    argo -. incident .-> rb
+    push --> ci --> build --> build_steps --> deploy
+    push --> iac --> sec1 --> deploy
+    deploy --> a5 --> argo
+    argo -.->|incident| rb
 
     classDef sec fill:#7B1FA2,stroke:#ffffff,color:#ffffff;
-    class sec1,sec2 sec
 ```
 
-🛡️ = security gate. **`tfsec`** scans the IaC and **`Trivy`** scans the image — both fail the build and upload SARIF to code scanning.
+🛡️ Purple = security gate. **`tfsec`** scans the IaC and **`Trivy`** scans the image — both fail the build and upload SARIF to code scanning.
 
 > 🛡️ **Two security gates, both fail-the-build and upload SARIF to code scanning:** `tfsec` scans the **IaC** before it ships, and `Trivy` scans the **image** before it is pushed.
 
